@@ -5,7 +5,7 @@ from langchain_groq import ChatGroq
 from langchain.document_loaders import PyPDFLoader
 from langchain.memory import ConversationBufferMemory
 from langchain.memory.chat_message_histories import StreamlitChatMessageHistory
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings  # Updated import
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.chains import ConversationalRetrievalChain
 from langchain.vectorstores import DocArrayInMemorySearch
@@ -34,7 +34,7 @@ def configure_retriever(uploaded_files):
     splits = text_splitter.split_documents(docs)
 
     # Create embeddings and store in vectordb
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")  # Updated import usage
     vectordb = DocArrayInMemorySearch.from_documents(splits, embeddings)
 
     # Define retriever
@@ -63,18 +63,24 @@ class StreamHandler(BaseCallbackHandler):
 
 class PrintRetrievalHandler(BaseCallbackHandler):
     def __init__(self, container):
-        self.status = container.status("**Context Retrieval**")
+        self.status = container.status("**Loading...**")
+        self.source_files = []
 
     def on_retriever_start(self, serialized: dict, query: str, **kwargs):
-        self.status.write(f"**Question:** {query}")
-        self.status.update(label=f"**Context Retrieval:** {query}")
+        # Show loading spinner
+        self.status.update(label="**Loading...**")
 
     def on_retriever_end(self, documents, **kwargs):
-        for idx, doc in enumerate(documents):
-            source = os.path.basename(doc.metadata["source"])
-            self.status.write(f"**Document {idx} from {source}**")
-            self.status.markdown(doc.page_content)
+        # Collect source filenames
+        self.source_files = [os.path.basename(doc.metadata["source"]) for doc in documents]
         self.status.update(state="complete")
+
+    def clear_status(self):
+        # Explicitly clear the loading spinner
+        self.status.empty()
+
+    def get_source_files(self):
+        return self.source_files
 
 
 # openai_api_key = st.sidebar.text_input("OpenAI API Key", type="password")
@@ -93,7 +99,7 @@ retriever = configure_retriever(uploaded_files)
 
 # Setup memory for contextual conversation
 msgs = StreamlitChatMessageHistory()
-memory = ConversationBufferMemory(memory_key="chat_history", chat_memory=msgs, return_messages=True)
+memory = ConversationBufferMemory(memory_key="chat_history", chat_memory=msgs, return_messages=True)  # Updated memory usage
 
 # Setup LLM and QA chain
 llm = ChatGroq(
@@ -124,3 +130,14 @@ if user_query := st.chat_input(placeholder="Ask me anything!"):
         retrieval_handler = PrintRetrievalHandler(st.container())
         stream_handler = StreamHandler(st.empty())
         response = qa_chain.run(user_query, callbacks=[retrieval_handler, stream_handler])
+
+        # Clear the loading spinner
+        retrieval_handler.clear_status()
+
+        # Display the response
+        st.markdown(response)
+
+        # Display source filenames
+        source_files = retrieval_handler.get_source_files()
+        if source_files:
+            st.markdown("**Sources:** " + ", ".join(source_files))
